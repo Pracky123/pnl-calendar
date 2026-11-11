@@ -218,9 +218,12 @@ button.tile {
   touch-action: manipulation;
   user-select: none;
   -webkit-user-select: none;
+  -webkit-tap-highlight-color: rgba(255, 255, 255, 0.16);
   background: var(--tile);
   color: var(--muted);
 }
+
+button.tile .pval { pointer-events: none; }
 
 .shell.narrow button.tile { border-radius: 6px; }
 
@@ -272,7 +275,7 @@ button.tile.selected:not(.today) {
   border: 2px solid #e8e8e8;
   box-shadow: inset 0 0 0 1px #e8e8e8;
 }
-button.tile.pressed {
+button.tile:active {
   transform: scale(0.96);
   filter: brightness(1.28);
   border: 2px solid #7a7a7a;
@@ -357,6 +360,7 @@ button.tile.pressed {
   color: var(--muted);
   font-size: 12px;
   transition: height 80ms linear;
+  pointer-events: none;
 }
 
 /* Bottom sheet */
@@ -369,6 +373,13 @@ button.tile.pressed {
   justify-content: center;
   background: rgba(0, 0, 0, 0.62);
   padding-bottom: var(--safe-bottom);
+  pointer-events: auto;
+}
+
+.sheet-backdrop[hidden],
+.sheet-backdrop.is-hidden {
+  display: none;
+  pointer-events: none;
 }
 
 .sheet {

@@ -13,7 +13,6 @@ let state = {
   month: null,
   unit: "USD",
   selected: null,
-  pressed: null,
   openList: false,
   boxW: 360,
   loading: false,
@@ -314,25 +313,28 @@ function render() {
       has ? "" : "empty",
       isToday ? "today" : "",
       isSel ? "selected" : "",
-      state.pressed === c.iso ? "pressed" : "",
     ].filter(Boolean).join(" ");
     const bg = isToday && !has ? null : positive ? tileTint(value, maxAbs, "pos") : negative ? tileTint(value, maxAbs, "neg") : null;
     const btn = el("button", {
       class: cls,
       type: "button",
+      "data-iso": c.iso,
       "aria-pressed": isSel ? "true" : "false",
       "aria-label": c.day + ". " + (has ? fmtTile(value, unit, narrow) : "Keine Trades"),
       style: bg ? { background: bg } : null,
-      onClick: () => { state.selected = isSel ? null : c.iso; render(); },
-      onPointerdown: () => { state.pressed = c.iso; render(); },
-      onPointerup: () => { state.pressed = null; render(); },
-      onPointercancel: () => { state.pressed = null; render(); },
-      onPointerleave: () => { if (state.pressed === c.iso) { state.pressed = null; render(); } },
     }, [
       el("div", { class: "dnum", text: String(c.day) }),
       el("div", { class: "pval", text: has ? fmtTile(value, unit, narrow) : "" }),
     ]);
     days.appendChild(btn);
+  });
+  days.addEventListener("click", (e) => {
+    const btn = e.target.closest("button.tile");
+    if (!btn || !days.contains(btn)) return;
+    const iso = btn.getAttribute("data-iso");
+    if (!iso) return;
+    state.selected = state.selected === iso ? null : iso;
+    render();
   });
 
   const pills = el("div", { class: "pills" }, [
@@ -474,34 +476,70 @@ function measure() {
   }
 }
 
-/* Pull-to-refresh when already at top. */
-let ptrStart = null;
+/* Pull-to-refresh when already at top. Never hijack taps on day tiles. */
+let ptrStartY = null;
+let ptrTracking = false;
+
 function setupPtr() {
   const ptrMin = 56;
-  window.addEventListener("touchstart", (e) => {
-    if (window.scrollY > 2 || state.selected) { ptrStart = null; return; }
-    ptrStart = e.touches[0].clientY;
-  }, { passive: true });
-  window.addEventListener("touchmove", (e) => {
-    if (ptrStart == null) return;
-    const dy = e.touches[0].clientY - ptrStart;
+
+  function ensurePtr() {
     let ptr = document.querySelector(".ptr");
     if (!ptr) {
       ptr = el("div", { class: "ptr", text: "Loslassen zum Aktualisieren" });
       document.body.prepend(ptr);
     }
-    if (dy > 12) ptr.style.height = Math.min(72, dy) + "px";
+    return ptr;
+  }
+
+  window.addEventListener("touchstart", (e) => {
+    const t = e.target;
+    const onControl = !!(t && t.closest && t.closest("button, a, input, textarea, select, .sheet, .sheet-backdrop"));
+    if (onControl || window.scrollY > 2 || state.selected) {
+      ptrStartY = null;
+      ptrTracking = false;
+      return;
+    }
+    ptrStartY = e.touches[0].clientY;
+    ptrTracking = true;
   }, { passive: true });
+
+  window.addEventListener("touchmove", (e) => {
+    if (!ptrTracking || ptrStartY == null) return;
+    const dy = e.touches[0].clientY - ptrStartY;
+    if (dy > 12) {
+      const ptr = ensurePtr();
+      ptr.style.height = Math.min(72, dy) + "px";
+    }
+  }, { passive: true });
+
+  /* preventDefault only after a real pull past the threshold, never on a tap. */
+  window.addEventListener("touchmove", (e) => {
+    if (!ptrTracking || ptrStartY == null) return;
+    const dy = e.touches[0].clientY - ptrStartY;
+    if (dy > ptrMin && window.scrollY <= 0 && e.cancelable) e.preventDefault();
+  }, { passive: false });
+
   window.addEventListener("touchend", (e) => {
+    const dy = ptrTracking && ptrStartY != null && e.changedTouches[0]
+      ? e.changedTouches[0].clientY - ptrStartY
+      : 0;
+    const shouldRefresh = ptrTracking && dy > ptrMin;
+    ptrStartY = null;
+    ptrTracking = false;
     const ptr = document.querySelector(".ptr");
-    const dy = ptrStart != null && e.changedTouches[0] ? e.changedTouches[0].clientY - ptrStart : 0;
-    ptrStart = null;
     if (ptr) ptr.style.height = "0px";
-    if (dy > ptrMin) refresh();
+    if (shouldRefresh) refresh();
   }, { passive: true });
 }
 
 if ("serviceWorker" in navigator) {
+  let reloading = false;
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (reloading) return;
+    reloading = true;
+    location.reload();
+  });
   window.addEventListener("load", () => {
     navigator.serviceWorker.register("sw.js").catch(() => {});
   });
