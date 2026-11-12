@@ -141,6 +141,40 @@ header.top {
 
 .refresh-btn.busy { opacity: 0.5; }
 
+.filter-bar {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  border: 1px solid var(--pill);
+  border-radius: 10px;
+  overflow: hidden;
+  margin: 0 0 14px;
+  height: 36px;
+}
+
+.shell.narrow .filter-bar { margin-bottom: 12px; height: 36px; }
+
+.filter-btn {
+  border: none;
+  border-right: 1px solid var(--pill);
+  background: transparent;
+  color: var(--weekday);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 0;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: rgba(255, 255, 255, 0.16);
+  min-width: 0;
+}
+
+.filter-btn:last-child { border-right: none; }
+
+.filter-btn.on {
+  background: #1a1a1a;
+  color: var(--text);
+  font-weight: 600;
+}
+
 .month-total {
   font-size: 34px;
   font-weight: 600;

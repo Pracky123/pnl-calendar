@@ -13,6 +13,7 @@ let state = {
   month: null,
   unit: "USD",
   selected: null,
+  filter: "all",
   openList: false,
   boxW: 360,
   loading: false,
@@ -190,6 +191,103 @@ function isStandalone() {
   return window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
 }
 
+function tradeGroup(t) {
+  return t && t.g === "bot" ? "bot" : "me";
+}
+
+function streaksFor(dates, pnlByDay) {
+  const trading = dates.filter((d) => Object.prototype.hasOwnProperty.call(pnlByDay, d));
+  let best = 0, cur = 0, lastLen = 0, lastEnd = null;
+  for (let i = 0; i < trading.length; i++) {
+    const d = trading[i];
+    if (pnlByDay[d] > 1e-9) {
+      cur += 1;
+      if (cur >= best) best = cur;
+      lastLen = cur;
+      lastEnd = d;
+    } else {
+      cur = 0;
+      lastLen = 0;
+      lastEnd = null;
+    }
+  }
+  const last = trading.length ? trading[trading.length - 1] : null;
+  const current = lastEnd === last && lastLen > 0 ? lastLen : 0;
+  return { current: current, best: best };
+}
+
+function buildView(filter) {
+  const trades = {};
+  const src = (DATA && DATA.trades) || {};
+  Object.keys(src).forEach((day) => {
+    const kept = src[day].filter((t) => filter === "all" || tradeGroup(t) === filter);
+    if (kept.length) trades[day] = kept;
+  });
+  const daily = {};
+  Object.keys(trades).forEach((day) => {
+    let pnl = 0, sells = 0, buys = 0;
+    trades[day].forEach((t) => {
+      if (t.k === "s") {
+        sells += 1;
+        if (t.p != null) pnl += t.p;
+      } else buys += 1;
+    });
+    const px = DATA.daily && DATA.daily[day] ? DATA.daily[day].px : null;
+    daily[day] = {
+      pnl: Math.round(pnl * 10000) / 10000,
+      sol: px ? Math.round((pnl / px) * 1e6) / 1e6 : null,
+      sells: sells,
+      buys: buys,
+      px: px,
+    };
+  });
+  const monthsOrder = (DATA && DATA.monthsOrder) || [];
+  const months = {};
+  monthsOrder.forEach((key) => {
+    const days = Object.keys(daily).filter((d) => d.slice(0, 7) === key).sort();
+    let pnl = 0, greenDays = 0, redDays = 0, greenSum = 0, redSum = 0;
+    let solPnl = 0, greenSol = 0, redSol = 0, solOk = true;
+    const pnlMap = {};
+    const sells = [];
+    days.forEach((d) => {
+      const st = daily[d];
+      pnl += st.pnl;
+      if (st.sol == null) solOk = false;
+      else solPnl += st.sol;
+      if (st.sells > 0 || Math.abs(st.pnl) > 1e-9) {
+        pnlMap[d] = st.pnl;
+        if (st.pnl > 1e-9) {
+          greenDays += 1; greenSum += st.pnl;
+          if (st.sol != null) greenSol += st.sol;
+        } else if (st.pnl < -1e-9) {
+          redDays += 1; redSum += st.pnl;
+          if (st.sol != null) redSol += st.sol;
+        }
+      }
+      (trades[d] || []).forEach((t) => {
+        if (t.k === "s" && t.p != null) sells.push({ s: t.s, p: t.p, d: d });
+      });
+    });
+    sells.sort((a, b) => b.p - a.p);
+    const st = streaksFor(days, pnlMap);
+    months[key] = {
+      pnl: Math.round(pnl * 10000) / 10000,
+      pnlSol: solOk ? Math.round(solPnl * 1e6) / 1e6 : null,
+      greenDays: greenDays,
+      greenSum: Math.round(greenSum * 10000) / 10000,
+      greenSol: solOk ? Math.round(greenSol * 1e6) / 1e6 : null,
+      redDays: redDays,
+      redSum: Math.round(redSum * 10000) / 10000,
+      redSol: solOk ? Math.round(redSol * 1e6) / 1e6 : null,
+      currentStreak: st.current,
+      bestStreak: st.best,
+      bestTrades: sells.slice(0, 5),
+      worstTrades: sells.slice(-5).reverse(),
+    };
+  });
+  return { daily: daily, months: months, trades: trades, monthsOrder: monthsOrder };
+}
+
 async function loadData() {
   const url = "data.json?t=" + Date.now();
   const res = await fetch(url, { cache: "no-store" });
@@ -224,19 +322,24 @@ function render() {
     return;
   }
 
+  const view = buildView(state.filter || "all");
   const narrow = state.boxW < 520;
   const tight = state.boxW < 380;
   const unit = state.unit;
   const month = state.month;
-  const months = DATA.monthsOrder;
-  const mo = DATA.months[month];
+  const months = view.monthsOrder;
+  const mo = view.months[month] || {
+    pnl: 0, pnlSol: 0, greenDays: 0, greenSum: 0, greenSol: 0,
+    redDays: 0, redSum: 0, redSol: 0, currentStreak: 0, bestStreak: 0,
+    bestTrades: [], worstTrades: [],
+  };
   const idx = months.indexOf(month);
   const today = berlinToday();
   const cells = cellsForMonth(month);
   let maxAbs = 1;
   cells.forEach((c) => {
     if (!c.iso) return;
-    const v = dayValue(DATA.daily[c.iso], unit);
+    const v = dayValue(view.daily[c.iso], unit);
     if (v != null) maxAbs = Math.max(maxAbs, Math.abs(v));
   });
 
@@ -275,6 +378,19 @@ function render() {
     ]),
   ]);
 
+  const filters = el("div", { class: "filter-bar", role: "tablist", "aria-label": "Wallet-Filter" },
+    [["all", "Alle"], ["me", "Ich"], ["bot", "Bot"]].map(([id, label]) =>
+      el("button", {
+        class: "filter-btn" + (state.filter === id ? " on" : ""),
+        type: "button",
+        role: "tab",
+        "aria-selected": state.filter === id ? "true" : "false",
+        "aria-pressed": state.filter === id ? "true" : "false",
+        onClick: () => { state.filter = id; state.selected = null; render(); },
+      }, [label])
+    )
+  );
+
   const total = el("div", {
     class: "month-total " + (monthPnl != null && monthPnl >= 0 ? "pos" : "neg"),
     text: monthPnl == null ? "—" : fmt(monthPnl, unit),
@@ -299,7 +415,7 @@ function render() {
       days.appendChild(el("div"));
       return;
     }
-    const stat = DATA.daily[c.iso];
+    const stat = view.daily[c.iso];
     const value = dayValue(stat, unit);
     const has = value != null && (stat && stat.sells ? stat.sells : 0) > 0;
     const isToday = c.iso === today;
@@ -348,8 +464,8 @@ function render() {
   }, [(state.openList ? "▾ " : "▸ ") + "Beste / schlechteste Trades"]);
 
   const lists = state.openList ? el("div", { class: "lists" }, [
-    miniList("Beste", mo.bestTrades, unit, mo),
-    miniList("Schlechteste", mo.worstTrades, unit, mo),
+    miniList("Beste", mo.bestTrades, unit, mo, view),
+    miniList("Schlechteste", mo.worstTrades, unit, mo, view),
   ]) : null;
 
   const stand = formatStand(DATA.generatedAt || DATA.periodEnd);
@@ -365,21 +481,21 @@ function render() {
     "Zum Home-Bildschirm: in Safari teilen (□↑), dann „Zum Home-Bildschirm“.",
   ]) : null;
 
-  shell.append(header, total, labels, bar, wds, days, pills, toggle);
+  shell.append(header, filters, total, labels, bar, wds, days, pills, toggle);
   if (lists) shell.append(lists);
   shell.append(status);
   if (hint) shell.append(hint);
 
   root.replaceChildren(shell);
-  if (state.selected) root.appendChild(renderSheet(narrow, unit));
+  if (state.selected) root.appendChild(renderSheet(narrow, unit, view));
   measure();
 }
 
-function miniList(title, rows, unit, mo) {
+function miniList(title, rows, unit, mo, view) {
   const pxFallback = mo && mo.pnl && mo.pnlSol ? mo.pnl / mo.pnlSol : null;
   const wrap = el("div", {}, [el("h3", { text: title })]);
   (rows || []).forEach((r) => {
-    const day = DATA.daily[r.d];
+    const day = (view && view.daily[r.d]) || (DATA.daily && DATA.daily[r.d]);
     const v = unit === "SOL" ? (day && day.px ? r.p / day.px : pxFallback ? r.p / pxFallback : null) : r.p;
     wrap.appendChild(el("div", { class: "row" }, [
       el("span", {}, [r.s + " ", el("span", { class: "when", text: r.d.slice(8) + "." + r.d.slice(5, 7) + "." })]),
@@ -389,10 +505,10 @@ function miniList(title, rows, unit, mo) {
   return wrap;
 }
 
-function renderSheet(narrow, unit) {
+function renderSheet(narrow, unit, view) {
   const selected = state.selected;
-  const selectedStat = DATA.daily[selected];
-  const dayTrades = (DATA.trades && DATA.trades[selected]) || [];
+  const selectedStat = (view && view.daily[selected]) || (DATA.daily && DATA.daily[selected]);
+  const dayTrades = (view && view.trades && view.trades[selected]) || [];
   const totalVal = selectedStat ? dayValue(selectedStat, unit) : null;
 
   const backdrop = el("div", {
