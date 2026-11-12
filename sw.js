@@ -1,5 +1,5 @@
 /* Offline shell for PNL Calendar. data.json is network-first so updates show up. */
-const CACHE = "pnl-calendar-v3";
+const CACHE = "pnl-calendar-v4";
 const SHELL = [
   "./",
   "./index.html",

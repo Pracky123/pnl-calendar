@@ -299,21 +299,47 @@ async function loadData() {
   }
   state.error = "";
   state.newOnchain = 0;
+  lastAutoRefresh = Date.now();
 }
 
-async function refresh() {
+async function refresh(opts) {
+  const silent = !!(opts && opts.silent);
   if (state.loading) return;
   state.loading = true;
-  state.error = "";
-  render();
+  const prev = DATA && DATA.generatedAt;
+  if (!silent) {
+    state.error = "";
+    render();
+  }
   try {
     await loadData();
   } catch (e) {
-    state.error = "Aktualisierung fehlgeschlagen";
+    if (!silent) state.error = "Aktualisierung fehlgeschlagen";
   }
   state.loading = false;
-  render();
+  /* Silent resume refresh must not rebuild the DOM unless data actually
+     changed — a mid-tap replaceChildren would drop the click, like the
+     old pointerdown re-render bug. */
+  if (!silent || state.error || (DATA && DATA.generatedAt !== prev)) {
+    render();
+  }
 }
+
+let lastAutoRefresh = 0;
+const AUTO_REFRESH_MIN_MS = 15000;
+
+function maybeAutoRefresh() {
+  if (typeof document !== "undefined" && document.visibilityState && document.visibilityState !== "visible") {
+    return;
+  }
+  if (Date.now() - lastAutoRefresh < AUTO_REFRESH_MIN_MS) return;
+  refresh({ silent: true });
+}
+
+document.addEventListener("visibilitychange", maybeAutoRefresh);
+window.addEventListener("pageshow", maybeAutoRefresh);
+window.addEventListener("focus", maybeAutoRefresh);
+setInterval(maybeAutoRefresh, 60000);
 
 function render() {
   const root = document.getElementById("app");
